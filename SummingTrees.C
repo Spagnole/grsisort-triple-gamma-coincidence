@@ -21,10 +21,11 @@ TFile *myfile;
 //TTree *tt;
 TChain tt("ggg_tree"); //the trees from the separate root files are added to a TChain!
 
-TH1D *hTotalProj = new TH1D("hTotalProj","Total Projection of g-g-g cube",6000,0.5,6000.5);
+TH1D *hTotalProj = new TH1D("hTotalProj","Total Projection of g-g-g cube",6000,0.5,6000.5); //user may have to change binning
 TH1D *hTimeDiff = new TH1D("hTimeDiff","Total Projection of g-g-g cube",6000,0.5,6000.5);
 TH1D *htemp;	TH1D *hTDtemp;	
 
+TH1D *hBkgr; //hist for TSpectrum background
 
 //this function is used to add all of the root files together to form a TChain to add all the trees together
 void SumTrees(int FirstRun, int LastRun){
@@ -92,8 +93,50 @@ void GetComptonBgScale(int peaktype, double peak, double fit_low, double fit_hig
 	
 }
 
+void TSpectrumBackground(TH1D *h, int iterations = 50, int decreasewindow = 1, int backorder = 2, bool smoothing = false, int smoothwindow = 3, bool compton = 0){
 
+	//extract binning information from the experimental spectrum
+	//we want to use the same binning to compare
+	const int Nbins = h->GetXaxis()->GetNbins();
+	double x_low = h->GetXaxis()->GetBinLowEdge(1);
+	double x_max = h->GetXaxis()->GetBinUpEdge(Nbins);
+	double source[Nbins];
+	if( hBkgr == NULL ) hBkgr = new TH1D("hBkgr","Simulated Background",Nbins,x_low,x_max);
+	
+	TSpectrum *s = new TSpectrum();
+	for (int i = 0; i < Nbins; i++) source[i]=h->GetBinContent(i + 1);
+	//s->Background(source,Nbins,75,TSpectrum::kBackDecreasingWindow, TSpectrum::kBackOrder2,kFALSE, TSpectrum::kBackSmoothing3,kFALSE);
+	s->Background(source,Nbins,iterations,decreasewindow,backorder,smoothing,smoothwindow,compton);
+	for (int i = 0; i < Nbins; i++) hBkgr->SetBinContent(i + 1,source[i]);      
+	h->Draw("hist");
+	hBkgr->SetLineColor(kOrange+1);
+	hBkgr->Draw("SAME L");
+}
 
+void GetBackgroundScaling(int Gate_Low, int Gate_high, int BG_low, int BG_high){
+
+	if( hBkgr == NULL ){
+		cout << "TSpectrum background is emply! Run TSpectrumBackground() function!\n";
+		return;
+	}
+	double PeakGateInt = hBkgr->Integral(Gate_Low,Gate_high);
+	double BkgrGateInt = hBkgr->Integral(BG_low,BG_high);
+	double BkgrScalineRatio = PeakGateInt / BkgrGateInt;
+	cout << "Scaling parameter for Background gate = " << BkgrScalineRatio << endl;
+	const int Nbins = hBkgr->GetXaxis()->GetNbins();
+	double x_low = hBkgr->GetXaxis()->GetBinLowEdge(1);
+	double x_max = hBkgr->GetXaxis()->GetBinUpEdge(Nbins);
+	TH1D *hGates = new TH1D("hGates","Gates",Nbins,x_low,x_max);
+	hGates->SetLineColor(kRed);
+	hGates->SetFillColor(kRed);
+	hGates->SetFillStyle(3000);
+	for(int i = Gate_Low; i <= Gate_high; i++) hGates->SetBinContent(i, hBkgr->GetBinContent(i) );
+	for(int i = BG_low; i <= BG_high; i++) hGates->SetBinContent(i, hBkgr->GetBinContent(i) );
+	
+	hTotalProj->Draw("hist");
+	hBkgr->Draw("SAME L");
+	hGates->Draw("same");
+}
 
 //Here is where the user gates on the tripple-gamma coincidence tree to produces gamma-gamma matrices
 // double BG_scale = -1. is the default value, if this value is used scaling of the compton background gate is performed using the gate widths
@@ -287,59 +330,4 @@ void MakeMatrix(int Gate_Low, int Gate_high, int BG_low, int BG_high, double BG_
 
 }
 
-
-/*
-			temptree[i]->Draw(Form("gE[%d]:gE[%d]>>gg_mat_E%d_pp_%d%d(7000,0.5,7000.5,7000,0.5,7000.5)",neworder[i][j][0],neworder[i][j][1],(Gate_high+Gate_Low)/2,neworder[i][j][0],neworder[i][j][1]),
-				Form("gE[%d]>%d&&gE[%d]<%d&&prompt_time[%d]==1&&prompt_time[%d]==1",i,Gate_Low,i,Gate_high,i,neworder[i][j][0]) ); 
-			//Step 2 gets matrix to add to sum of projections matrix
-			mat_Peak_pp[i][j] = (TH2F*)newfile->Get(Form("gg_mat_E%d_pp_%d%d",(Gate_high+Gate_Low)/2,neworder[i][j][0],neworder[i][j][1])); 
-			//Step 3 adds matrix to sum
-			mat_pp_sum->Add(mat_Peak_pp[i][j]);
-			//repeats from here with different time-coincidence condition
-			
-			//random-prompt coincidence			
-			temptree[i]->Draw(Form("gE[%d]:gE[%d]>>gg_mat_E%d_rp_%d%d(7000,0.5,7000.5,7000,0.5,7000.5)",neworder[i][j][0],neworder[i][j][1],(Gate_high+Gate_Low)/2,neworder[i][j][0],neworder[i][j][1]),
-				Form("gE[%d]>%d&&gE[%d]<%d&&prompt_time[%d]==0&&prompt_time[%d]==1",i,Gate_Low,i,Gate_high,i,neworder[i][j][0]) );
-			mat_Peak_rp[i][j] = (TH2F*)newfile->Get(Form("gg_mat_E%d_rp_%d%d",(Gate_high+Gate_Low)/2,neworder[i][j][0],neworder[i][j][1]));
-			mat_rp_sum->Add(mat_Peak_rp[i][j]);
-			//prompt random coincidence						
-			temptree[i]->Draw(Form("gE[%d]:gE[%d]>>gg_mat_E%d_pr_%d%d(7000,0.5,7000.5,7000,0.5,7000.5)",neworder[i][j][0],neworder[i][j][1],(Gate_high+Gate_Low)/2,neworder[i][j][0],neworder[i][j][1]),
-				Form("gE[%d]>%d&&gE[%d]<%d&&prompt_time[%d]==1&&prompt_time[%d]==0",i,Gate_Low,i,Gate_high,i,neworder[i][j][0]) );	
-			mat_Peak_pr[i][j] = (TH2F*)newfile->Get(Form("gg_mat_E%d_pr_%d%d",(Gate_high+Gate_Low)/2,neworder[i][j][0],neworder[i][j][1]));
-			mat_pr_sum->Add(mat_Peak_pr[i][j]);
-			//random-random coincidence									
-			temptree[i]->Draw(Form("gE[%d]:gE[%d]>>gg_mat_E%d_rr_%d%d(7000,0.5,7000.5,7000,0.5,7000.5)",neworder[i][j][0],neworder[i][j][1],(Gate_high+Gate_Low)/2,neworder[i][j][0],neworder[i][j][1]),
-				Form("gE[%d]>%d&&gE[%d]<%d&&prompt_time[%d]==0&&prompt_time[%d]==0",i,Gate_Low,i,Gate_high,i,neworder[i][j][0]) );
-			mat_Peak_rr[i][j] = (TH2F*)newfile->Get(Form("gg_mat_E%d_rr_%d%d",(Gate_high+Gate_Low)/2,neworder[i][j][0],neworder[i][j][1]));
-			mat_rr_sum->Add(mat_Peak_rr[i][j]);						
-			//cout << i << " " << neworder[i][j][0] << endl;
-			
-			//REPEAT GATING FOR COMPTON BACKGROUND
-			temptree[i]->Draw(Form("gE[%d]:gE[%d]>>ggBG_mat_E%d_pp_%d%d(7000,0.5,7000.5,7000,0.5,7000.5)",neworder[i][j][0],neworder[i][j][1],(BG_high+BG_low)/2,neworder[i][j][0],neworder[i][j][1]),
-				Form("gE[%d]>%d&&gE[%d]<%d&&prompt_time[%d]==1&&prompt_time[%d]==1",i,BG_low,i,BG_high,i,neworder[i][j][0]) );
-			matBG_Peak_pp[i][j] = (TH2F*)newfile->Get(Form("ggBG_mat_E%d_pp_%d%d",(BG_high+BG_low)/2,neworder[i][j][0],neworder[i][j][1]));
-			matBG_pp_sum->Add(matBG_Peak_pp[i][j]);
-			
-			temptree[i]->Draw(Form("gE[%d]:gE[%d]>>ggBG_mat_E%d_rp_%d%d(7000,0.5,7000.5,7000,0.5,7000.5)",neworder[i][j][0],neworder[i][j][1],(BG_high+BG_low)/2,neworder[i][j][0],neworder[i][j][1]),
-				Form("gE[%d]>%d&&gE[%d]<%d&&prompt_time[%d]==0&&prompt_time[%d]==1",i,BG_low,i,BG_high,i,neworder[i][j][0]) );
-			matBG_Peak_rp[i][j] = (TH2F*)newfile->Get(Form("ggBG_mat_E%d_rp_%d%d",(BG_high+BG_low)/2,neworder[i][j][0],neworder[i][j][1]));
-			matBG_rp_sum->Add(matBG_Peak_rp[i][j]);						
-			temptree[i]->Draw(Form("gE[%d]:gE[%d]>>ggBG_mat_E%d_pr_%d%d(7000,0.5,7000.5,7000,0.5,7000.5)",neworder[i][j][0],neworder[i][j][1],(BG_high+BG_low)/2,neworder[i][j][0],neworder[i][j][1]),
-				Form("gE[%d]>%d&&gE[%d]<%d&&prompt_time[%d]==1&&prompt_time[%d]==0",i,BG_low,i,BG_high,i,neworder[i][j][0]) );	
-			matBG_Peak_pr[i][j] = (TH2F*)newfile->Get(Form("ggBG_mat_E%d_pr_%d%d",(BG_high+BG_low)/2,neworder[i][j][0],neworder[i][j][1]));
-			matBG_pr_sum->Add(matBG_Peak_pr[i][j]);									
-			temptree[i]->Draw(Form("gE[%d]:gE[%d]>>ggBG_mat_E%d_rr_%d%d(7000,0.5,7000.5,7000,0.5,7000.5)",neworder[i][j][0],neworder[i][j][1],(BG_high+BG_low)/2,neworder[i][j][0],neworder[i][j][1]),
-				Form("gE[%d]>%d&&gE[%d]<%d&&prompt_time[%d]==0&&prompt_time[%d]==0",i,BG_low,i,BG_high,i,neworder[i][j][0]) );
-			matBG_Peak_rr[i][j] = (TH2F*)newfile->Get(Form("ggBG_mat_E%d_rr_%d%d",(BG_high+BG_low)/2,neworder[i][j][0],neworder[i][j][1]));
-			matBG_rr_sum->Add(matBG_Peak_rr[i][j]);	
-*/
-
-			/*mat_Peak_pp[i][j]->Write();
-			mat_Peak_rp[i][j]->Write();
-			mat_Peak_pr[i][j]->Write();
-			mat_Peak_rr[i][j]->Write();		
-			matBG_Peak_pp[i][j]->Write();
-			matBG_Peak_pr[i][j]->Write();
-			matBG_Peak_rp[i][j]->Write();
-			matBG_Peak_rr[i][j]->Write();
-			*/	
+	
